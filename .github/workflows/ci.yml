@@ -1,0 +1,63 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'development'
+        type: choice
+        options:
+          - development
+          - staging
+          - production
+      debug_enabled:
+        description: 'Run the workflow with debug logging'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  test:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Debug Info
+        if: inputs.debug_enabled
+        run: |
+          echo "Running in ${{ github.event.inputs.environment }} environment"
+          docker version
+          docker compose version
+      
+      - name: Run Tests
+        run: |
+          docker compose -f docker-compose.test.yml up --build --exit-code-from tests
+
+  build:
+    needs: test
+    runs-on: self-hosted
+    steps:
+      - name: Build Images
+        run: |
+          docker compose build
+
+  deploy:
+    needs: build
+    runs-on: self-hosted
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Deploy
+        run: |
+          docker compose down
+          docker compose up -d
+      
+      - name: Post-Deploy Health Check
+        run: |
+          echo "Checking deployment health..."
+          # Add health check commands here
