@@ -2,7 +2,7 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, dev ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
@@ -25,6 +25,7 @@ on:
 jobs:
   test:
     runs-on: self-hosted
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       
@@ -34,30 +35,60 @@ jobs:
           echo "Running in ${{ github.event.inputs.environment }} environment"
           docker version
           docker compose version
+          
+      - name: Validate Compose Files
+        run: |
+          docker compose -f docker-compose.yml config
+          docker compose -f docker-compose.test.yml config
       
       - name: Run Tests
         run: |
           docker compose -f docker-compose.test.yml up --build --exit-code-from tests
+        continue-on-error: false
 
   build:
     needs: test
     runs-on: self-hosted
+    timeout-minutes: 15
     steps:
+      - uses: actions/checkout@v4
+      
       - name: Build Images
         run: |
           docker compose build
+          
+      - name: Verify Build
+        run: |
+          docker compose config
 
   deploy:
     needs: build
     runs-on: self-hosted
+    timeout-minutes: 10
     if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    environment: ${{ github.event.inputs.environment }}
     steps:
+      - uses: actions/checkout@v4
+      
       - name: Deploy
         run: |
-          docker compose down
+          docker compose down --remove-orphans
           docker compose up -d
       
       - name: Post-Deploy Health Check
         run: |
           echo "Checking deployment health..."
-          # Add health check commands here
+          # Wait for services to be healthy
+          sleep 10
+          docker compose ps
+          # Add specific health check commands here
+        
+      - name: Deployment Status
+        if: always()
+        run: |
+          if [ ${{ job.status }} == 'success' ]; then
+            echo "Deployment completed successfully"
+          else
+            echo "Deployment failed"
+            exit 1
+          fi
